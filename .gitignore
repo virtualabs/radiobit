@@ -1,0 +1,15 @@
+# ignore Micropython build firmware
+micropython/build/
+
+# ignore Micropython yotta_modules
+micropython/yotta_modules/
+
+# ignore Micropython yotta_targets
+micropython/yotta_targets/
+micropython/.yotta*
+
+# ignore compiled Python modules
+*.pyc
+
+# ignore our virtualenv
+venv
