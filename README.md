@@ -30,6 +30,8 @@ Radiobit also provides many examples of what can be achieved with its firmware:
 
 **A precompiled version of the Radiobit firmware is provided in the *precompiled* directory, as a convenience.**
 
+If you want to try Radiobit's custom radio Python module, read the [specific documentation](doc/README.md).
+
 How to program the Micro:Bit with some Python code
 --------------------------------------------------
 
