@@ -142,7 +142,7 @@ while True:
                 if not found:
                     uart.write(b't'+chr(101))
             elif cmd == 0x73:
-                data = payload[1:]
+                data = bytes(payload[2:])
                 radio.send_bytes(data)
                 uart.write(b's')
             elif cmd == 0x6D and size >= 2:
