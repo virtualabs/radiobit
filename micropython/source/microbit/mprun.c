@@ -13,9 +13,10 @@
 #include "lib/utils/pyexec.h"
 #include "filesystem.h"
 #include "memory.h"
+#include "_newlib_version.h"
 
 extern void microbit_init(void);
-    
+
 void microbit_display_exception(mp_obj_t exc_in) {
     mp_uint_t n, *values;
     mp_obj_exception_get_traceback(exc_in, &n, &values);
@@ -99,8 +100,15 @@ void mp_run(void) {
     mp_stack_set_limit(1800); // stack is 2k
 
     // allocate the heap statically in the bss
+#if __NEWLIB__ > 2 || (__NEWLIB__ == 2 && (__NEWLIB_MINOR__ > 4 || (__NEWLIB_MINOR == 4 && __NEWLIB_PATCHLEVEL > 0)))
+#warning "Detected newlib >2.4.0 so reducing heap by 400 bytes"
+    static uint32_t heap[9292 / 4];
+#else
     static uint32_t heap[9692 / 4];
+#endif
+
     gc_init(heap, (uint8_t*)heap + sizeof(heap));
+
 
     /*
     // allocate the heap using system malloc
