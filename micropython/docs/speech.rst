@@ -3,15 +3,14 @@ Speech
 
 .. warning::
 
-    WARNING! THIS IS ALPHA CODE.
-
-    We reserve the right to change this API as development continues.
+    WARNING! This is still work in progress; we reserve the right to change this API as development continues.
 
     The quality of the speech is not great, merely "good enough". Given the
     constraints of the device you may encounter memory errors and / or
     unexpected extra sounds during playback. It's early days and we're
     improving the code for the speech synthesiser all the time. Bug reports
     and pull requests are most welcome.
+
 
 .. py:module:: speech
 
@@ -194,7 +193,7 @@ The table below lists the phonemes understood by the synthesiser.
     EH           b(e)g                     W        a(w)ay
     AE           S(a)m                     W        (wh)ale
     AA           p(o)t                     Y        (y)ou
-    AH           b(u)dget                  M        (S)am
+    AH           b(u)dget                  M        Sa(m)
     AO           t(al)k                    N        ma(n)
     OH           c(o)ne                    NX       so(ng)
     UH           b(oo)k                    B        (b)ad

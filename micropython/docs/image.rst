@@ -5,11 +5,23 @@ Image
 
 The ``Image`` class is used to create images that can be displayed easily on
 the device's LED matrix. Given an image object it's possible to display it via
-the ``device`` API::
+the ``display`` API::
 
     display.show(Image.HAPPY)
 
 .. image:: image-smile.png
+
+There are four ways in which you can construct an image:
+
+- ``Image()`` - Create a blank 5x5 image
+
+- ``Image(string)`` - Create an image by parsing the string, a single character
+  returns that glyph
+
+- ``Image(width, height)`` - Create a blank image of given size
+
+- ``Image(width, height, buffer)`` - Create an image from the given buffer
+
 
 Classes
 =======
@@ -39,8 +51,19 @@ Classes
 
     The other form creates an empty image with ``width`` columns and
     ``height`` rows. Optionally ``buffer`` can be an array of
-    ``width``×``height`` integers in range 0-9 to initialize the image.
+    ``width``×``height`` integers in range 0-9 to initialize the image::
+   
+        Image(2, 2, b'\x08\x08\x08\x08')
 
+    or::
+
+    	Image(2, 2, bytearray([9,9,9,9]))
+	
+    Will create a 2 x 2 pixel image at full brightness.
+    
+    .. note::
+    
+        Keyword arguments cannot be passed to ``buffer``.
 
     .. py:method:: width()
 
@@ -57,7 +80,7 @@ Classes
         Set the brightness of the pixel at column ``x`` and row ``y`` to the
         ``value``, which has to be between 0 (dark) and 9 (bright).
 
-        This method will raise an exception when called on any of the build-in
+        This method will raise an exception when called on any of the built-in
         read-only images, like ``Image.HEART``.
 
 
@@ -99,6 +122,29 @@ Classes
 
         Return a new image by inverting the brightness of the pixels in the
         source image.
+
+    .. py:method:: fill(value)
+
+        Set the brightness of all the pixels in the image to the
+        ``value``, which has to be between 0 (dark) and 9 (bright).
+
+        This method will raise an exception when called on any of the built-in
+        read-only images, like ``Image.HEART``.
+
+    .. py:method:: blit(src, x, y, w, h, xdest=0, ydest=0)
+
+        Copy the rectangle defined by ``x``, ``y``, ``w``, ``h`` from the image ``src`` into
+        this image at ``xdest``, ``ydest``.
+        Areas in the source rectangle, but outside the source image are treated as having a value of 0.
+
+        ``shift_left()``, ``shift_right()``, ``shift_up()``, ``shift_down()`` and ``crop()``
+        can are all implemented by using ``blit()``.
+        For example, img.crop(x, y, w, h) can be implemented as::
+
+            def crop(self, x, y, w, h):
+                res = Image(w, h)
+                res.blit(self, x, y, w, h)
+                return res
 
 
 Attributes
