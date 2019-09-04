@@ -1,9 +1,13 @@
 /*
  * This file is part of the MicroPython project, http://micropython.org/
  *
+ * Contains some code from MouseJack (developed by BastilleResearch)
+ * see: https://github.com/BastilleResearch/nrf-research-firmware/
+ *
  * The MIT License (MIT)
  *
  * Copyright (c) 2016 Damien P. George
+ * Copyright (c) 2016 Damien Cauquil
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
