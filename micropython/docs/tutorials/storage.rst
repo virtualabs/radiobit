@@ -8,7 +8,14 @@ switch the device off and on again.
 
 Happily MicroPython on the micro:bit allows you to do this with a very simple
 file system. Because of memory constraints **there is approximately 30k of
-storage available** on the file system.
+storage available** on the file system. 
+
+.. note::
+
+    The micropython file system should not be confused
+    with the micro:bit mass storage mode which presents the device as a USB drive. 
+    Mass storage mode is only intended for copying across a HEX file, so you won't
+    see files you create using the file system appearing on the MICROBIT drive.
 
 What is a file system?
 
@@ -35,7 +42,7 @@ your files are just stored in the same place.
 
 The Python programming language contains easy to use and powerful ways in which
 to work with a computer's file system. MicroPython on the micro:bit implements
-a useful subset of these features to make is easy to read and write files on
+a useful subset of these features to make it easy to read and write files on
 the device, while also providing consistency with other versions of Python.
 
 .. warning::
@@ -198,7 +205,7 @@ same function).
 
     $ ufs rm story.txt
 
-The ``rm`` sub-command removes the named from from the file system on the
+The ``rm`` sub-command removes the named file from the file system on the
 connected micro:bit (it's named after the common Unix command, ``rm``, that
 serves the same function).
 

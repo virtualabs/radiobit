@@ -27,7 +27,8 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include "MicroBit.h"
+#include "MicroBitConfig.h"
+#include "MicroBitImage.h"
 
 extern "C" {
 
@@ -36,7 +37,7 @@ extern "C" {
 
 #include "py/runtime0.h"
 #include "py/runtime.h"
-#include "microbitobj.h"
+//#include "microbitobj.h"
 #include <nrf_delay.h>
 
 #define RADIO_DEFAULT_MODE          (0)
@@ -333,7 +334,8 @@ void RADIO_IRQHandler(void) {
                 rx_buf[5] = rx_buf[0];
 
                 // add current channel and timestamp
-                timestamp = uBit.systemTime();
+                //timestamp = uBit.systemTime();
+                timestamp = 0;
                 memcpy((void*)&rx_buf[1], &timestamp, 4);
                 rx_buf[0] = radio_state.channel;
 
@@ -1669,7 +1671,7 @@ STATIC MP_DEFINE_CONST_DICT(radio_module_globals, radio_module_globals_table);
 
 const mp_obj_module_t radio_module = {
     .base = { &mp_type_module },
-    .name = MP_QSTR_radio,
+    //.name = MP_QSTR_radio,
     .globals = (mp_obj_dict_t*)&radio_module_globals,
 };
 

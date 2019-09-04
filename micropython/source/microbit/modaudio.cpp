@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -28,7 +28,6 @@
 
 extern "C" {
 
-#include "microbit/modmicrobit.h"
 #include "gpio_api.h"
 #include "device.h"
 #include "nrf_gpio.h"
@@ -42,12 +41,12 @@ extern "C" {
 #include "py/objstr.h"
 #include "py/mphal.h"
 #include "py/gc.h"
+#include "microbit/modmicrobit.h"
 #include "microbit/modaudio.h"
-#include "microbit/microbitobj.h"
-#include "microbit/microbitpin.h"
 
-#define TheTimer NRF_TIMER1
-#define TheTimer_IRQn TIMER1_IRQn
+#define TheTimer NRF_TIMER2
+#define TheTimer_IRQn TIMER2_IRQn
+#define TheTimer_Anomaly73_Addr (NRF_TIMER2_BASE + 0xC0C)
 
 #define DEBUG_AUDIO 0
 #if DEBUG_AUDIO
@@ -57,14 +56,14 @@ extern "C" {
 #define DEBUG(s) (void)0
 #endif
 
-void disable_gpiote(uint8_t channel)
+static void disable_gpiote(uint8_t channel)
 {
     nrf_gpiote_task_configure(channel, 31, NRF_GPIOTE_POLARITY_TOGGLE, NRF_GPIOTE_INITIAL_VALUE_LOW);
     DEBUG(("GPIOTE disable channel %d\r\n", channel));
     nrf_gpiote_te_default(channel);
 }
 
-void audio_gpiote_init(PinName pin, uint8_t channel)
+static void audio_gpiote_init(uint32_t pin, uint8_t channel)
 {
     DEBUG(("GPIOTE init. pin %d, channel %d\r\n", pin, channel));
     nrf_gpio_pin_clear(pin);
@@ -112,7 +111,7 @@ static void audio_ppi_init(uint8_t channel0, uint8_t channel1) {
 */
 static inline void timer_stop(void) {
     TheTimer->TASKS_STOP = 1;
-    *(uint32_t *)0x40009C0C = 0; //for Timer 1
+    *(uint32_t *)TheTimer_Anomaly73_Addr = 0;
     TheTimer->TASKS_CLEAR = 1;
     TheTimer->CC[0] = 0xfffc;
     TheTimer->CC[1] = 0xfffc;
@@ -121,7 +120,7 @@ static inline void timer_stop(void) {
 }
 
 static inline void timer_start(void) {
-    *(uint32_t *)0x40009C0C = 1; //for Timer 1
+    *(uint32_t *)TheTimer_Anomaly73_Addr = 1;
     TheTimer->TASKS_START = 1;
 }
 
@@ -132,8 +131,8 @@ static bool sample = false;
 static volatile bool fetcher_ready = true;
 static bool double_pin = true;
 static volatile int32_t audio_buffer_read_index;
-static PinName pin0 = P0_3;
-static PinName pin1 = P0_2;
+static const microbit_pin_obj_t *pin0 = NULL;
+static const microbit_pin_obj_t *pin1 = NULL;
 
 #define audio_buffer_ptr MP_STATE_PORT(audio_buffer)
 #define audio_source_iter MP_STATE_PORT(audio_source)
@@ -147,12 +146,13 @@ void audio_stop(void) {
     delta = 0;
     audio_ppi_disconnect();
     disable_gpiote(0);
-    nrf_gpio_pin_write(pin0, 0);
+    nrf_gpio_pin_write(pin0->name, 0);
+    microbit_obj_pin_free(pin0);
     if (double_pin) {
         disable_gpiote(1);
-        nrf_gpio_pin_write(pin1, 0);
+        nrf_gpio_pin_write(pin1->name, 0);
+        microbit_obj_pin_free(pin1);
     }
-    //NRF_CLOCK->TASKS_HFCLKSTOP = 1;
 }
 
 static int32_t audio_ticker(void);
@@ -160,21 +160,24 @@ static int32_t audio_ticker(void);
 
 #define AUDIO_BUFFER_MASK (AUDIO_BUFFER_SIZE-1)
 
-static void init_pin(PinName p0) {
+static void init_pin(const microbit_pin_obj_t *p0) {
+    microbit_obj_pin_acquire(p0, microbit_pin_mode_audio_play);
     pin0 = p0;
-    nrf_gpio_pin_write(pin0, 0);
-    audio_gpiote_init(pin0, 0);
+    nrf_gpio_pin_write(pin0->name, 0);
+    audio_gpiote_init(pin0->name, 0);
     audio_ppi_init(0, 0);
     double_pin = false;
 }
 
-static void init_pins(PinName p0, PinName p1) {
+static void init_pins(const microbit_pin_obj_t *p0, const microbit_pin_obj_t *p1) {
+    microbit_obj_pin_acquire(p1, microbit_pin_mode_audio_play);
+    microbit_obj_pin_acquire(p0, microbit_pin_mode_audio_play);
     pin0 = p0;
     pin1 = p1;
-    nrf_gpio_pin_write(pin0, 0);
-    nrf_gpio_pin_write(pin1, 0);
-    audio_gpiote_init(pin0, 0);
-    audio_gpiote_init(pin1, 1);
+    nrf_gpio_pin_write(pin0->name, 0);
+    nrf_gpio_pin_write(pin1->name, 0);
+    audio_gpiote_init(pin0->name, 0);
+    audio_gpiote_init(pin1->name, 1);
     audio_ppi_init(0, 1);
     double_pin = true;
 }
@@ -320,45 +323,60 @@ static int32_t audio_ticker(void) {
 }
 
 static void audio_set_pins(mp_obj_t pin0_obj, mp_obj_t pin1_obj) {
-    PinName p0 = microbit_obj_get_pin_name(pin0_obj);
+    const microbit_pin_obj_t *p0 = microbit_obj_get_pin(pin0_obj);
     if (pin1_obj == mp_const_none) {
         init_pin(p0);
     } else {
-        PinName p1 = microbit_obj_get_pin_name(pin1_obj);
+        const microbit_pin_obj_t *p1 = microbit_obj_get_pin(pin1_obj);
         init_pins(p0, p1);
     }
 }
 
-static int32_t pin_read_digital(mp_obj_t pin) {
-    PinName p = microbit_obj_get_pin_name(pin);
-    nrf_gpio_cfg_input(p, NRF_GPIO_PIN_NOPULL);
+static int32_t pin_read_digital(const microbit_pin_obj_t *pin) {
+    nrf_gpio_cfg_input(pin->name, NRF_GPIO_PIN_NOPULL);
     // Allow 1µs to settle.
     nrf_delay_us(1);
-    return nrf_gpio_pin_read(p);
+    return nrf_gpio_pin_read(pin->name);
 }
 
-static const mp_obj_t big_pins[3] = { (mp_obj_t)&microbit_p0_obj, (mp_obj_t)&microbit_p1_obj, (mp_obj_t)&microbit_p2_obj };
+static const microbit_pin_obj_t *big_pins[3] = { &microbit_p0_obj, &microbit_p1_obj, &microbit_p2_obj };
 
 static void audio_auto_set_pins(void) {
     // Test to see if two of the "big" pins are connected by some sort of resistor.
     uint32_t i, j, count;
+    bool usable[3];
+    if (microbit_obj_pin_can_be_acquired(&microbit_p0_obj)) {
+        usable[0] = true;
+        microbit_obj_pin_acquire(&microbit_p0_obj, microbit_pin_mode_unused);
+    }
+    if (microbit_obj_pin_can_be_acquired(&microbit_p1_obj)) {
+        usable[1] = true;
+        microbit_obj_pin_acquire(&microbit_p1_obj, microbit_pin_mode_unused);
+    }
+    if (microbit_obj_pin_can_be_acquired(&microbit_p2_obj)) {
+        usable[2] = true;
+        microbit_obj_pin_acquire(&microbit_p2_obj, microbit_pin_mode_unused);
+    }
     for (i = 0; i < 2; i++) {
-        mp_obj_t pin1 = big_pins[i];
-        PinName p1 = microbit_obj_get_pin_name(pin1);
-        nrf_gpio_cfg_output(p1);
+        if (!usable[i])
+            continue;
+        const microbit_pin_obj_t *pin1 = big_pins[i];
+        nrf_gpio_cfg_output(pin1->name);
         for (j = i+1; j < 3; j++) {
-            mp_obj_t pin2 = (mp_obj_t)big_pins[j];
+            if (!usable[j])
+                continue;
+            const microbit_pin_obj_t *pin2 = big_pins[j];
             for (count = 0; count < 4; count++) {
-                nrf_gpio_pin_set(p1);
+                nrf_gpio_pin_set(pin1->name);
                 if (pin_read_digital(pin2) != 1)
                     break;
-                nrf_gpio_pin_clear(p1);
+                nrf_gpio_pin_clear(pin1->name);
                 if (pin_read_digital(pin2) != 0)
                     break;
             }
             DEBUG(("Count: %lu\r\n", count));
             if (count == 4) {
-                audio_set_pins(pin1, pin2);
+                init_pins(pin1, pin2);
                 return;
             }
         }
@@ -368,10 +386,8 @@ static void audio_auto_set_pins(void) {
 }
 
 static void audio_init(void) {
-    static bool initialised = false;
-    if (!initialised) {
+    if (audio_buffer_ptr == NULL) {
         audio_source_iter = NULL;
-        initialised = true;
         //Allocate buffer
         audio_buffer_ptr = m_new(uint8_t, AUDIO_BUFFER_SIZE);
     }
@@ -397,12 +413,12 @@ void audio_play_source(mp_obj_t src, mp_obj_t pin1, mp_obj_t pin2, bool wait) {
         if (pin2 == mp_const_none) {
             audio_auto_set_pins();
         } else {
-            nlr_raise(mp_obj_new_exception_msg(&mp_type_TypeError, "Cannot set return_pin without pin"));
+            mp_raise_TypeError("cannot set return_pin without pin");
         }
     } else {
         audio_set_pins(pin1, pin2);
     }
-    audio_source_iter = mp_getiter(src);
+    audio_source_iter = mp_getiter(src, NULL);
     sample = false;
     fetcher_ready = true;
     audio_buffer_read_index = AUDIO_BUFFER_SIZE-1;
@@ -469,18 +485,18 @@ STATIC mp_obj_t audio_frame_subscr(mp_obj_t self_in, mp_obj_t index_in, mp_obj_t
     microbit_audio_frame_obj_t *self = (microbit_audio_frame_obj_t *)self_in;
     mp_int_t index = mp_obj_get_int(index_in);
     if (index < 0 || index >= AUDIO_CHUNK_SIZE) {
-         nlr_raise(mp_obj_new_exception_msg(&mp_type_ValueError, "index out of bounds"));
+         mp_raise_ValueError("index out of bounds");
     }
     if (value_in == MP_OBJ_NULL) {
         // delete
-        nlr_raise(mp_obj_new_exception_msg(&mp_type_TypeError, "Cannot delete elements of AudioFrame"));
+        mp_raise_TypeError("cannot delete elements of AudioFrame");
     } else if (value_in == MP_OBJ_SENTINEL) {
         // load
         return MP_OBJ_NEW_SMALL_INT(self->data[index]);
     } else {
         mp_int_t value = mp_obj_get_int(value_in);
         if (value < 0 || value > 255) {
-            nlr_raise(mp_obj_new_exception_msg(&mp_type_ValueError, "value out of range"));
+            mp_raise_ValueError("value out of range");
         }
         self->data[index] = value;
         return mp_const_none;
@@ -526,11 +542,11 @@ static microbit_audio_frame_obj_t *copy(microbit_audio_frame_obj_t *self) {
 
 mp_obj_t copyfrom(mp_obj_t self_in, mp_obj_t other) {
     microbit_audio_frame_obj_t *self = (microbit_audio_frame_obj_t *)self_in;
-    if (mp_obj_get_type(other) != &microbit_audio_frame_type) {
-        nlr_raise(mp_obj_new_exception_msg(&mp_type_TypeError, "Must be an AudioBuffer"));
-    }
-    for (int i = 0; i < AUDIO_CHUNK_SIZE; i++) {
-        self->data[i] = ((microbit_audio_frame_obj_t *)other)->data[i];
+    mp_buffer_info_t bufinfo;
+    mp_get_buffer_raise(other, &bufinfo, MP_BUFFER_READ);
+    uint32_t len = bufinfo.len > AUDIO_CHUNK_SIZE ? AUDIO_CHUNK_SIZE : bufinfo.len;
+    for (uint32_t i = 0; i < len; i++) {
+        self->data[i] = ((uint8_t *)bufinfo.buf)[i];
     }
    return mp_const_none;
 }
@@ -618,9 +634,9 @@ const mp_obj_type_t microbit_audio_frame_type = {
     .getiter = NULL,
     .iternext = NULL,
     .buffer_p = { .get_buffer = audio_frame_get_buffer },
-    .stream_p = NULL,
-    .bases_tuple = NULL,
-    .locals_dict = (mp_obj_dict_t*)&microbit_audio_frame_locals_dict_table,
+    .protocol = NULL,
+    .parent = NULL,
+    .locals_dict = (mp_obj_dict_t*)&microbit_audio_frame_locals_dict,
 };
 
 microbit_audio_frame_obj_t *new_microbit_audio_frame(void) {
@@ -642,7 +658,6 @@ STATIC MP_DEFINE_CONST_DICT(audio_module_globals, audio_globals_table);
 
 const mp_obj_module_t audio_module = {
     .base = { &mp_type_module },
-    .name = MP_QSTR_audio,
     .globals = (mp_obj_dict_t*)&audio_module_globals,
 };
 

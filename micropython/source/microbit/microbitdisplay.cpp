@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -25,19 +25,40 @@
  */
 
 #include <string.h>
-#include "microbitobj.h"
 #include "nrf_gpio.h"
+#include "MicroBitDisplay.h"
+#include "MicroBitLightSensor.h"
 
 extern "C" {
+
 #include "py/runtime.h"
 #include "py/gc.h"
-#include "modmicrobit.h"
-#include "microbitimage.h"
-#include "microbitdisplay.h"
+#include "py/objstr.h"
 #include "lib/iters.h"
 #include "lib/ticker.h"
+#include "microbit/modmicrobit.h"
+#include "microbit/microbit_image.h"
 
 #define min(a,b) (((a)<(b))?(a):(b))
+
+#define ASYNC_MODE_STOPPED 0
+#define ASYNC_MODE_ANIMATION 1
+#define ASYNC_MODE_CLEAR 2
+
+typedef struct _microbit_display_obj_t {
+    mp_obj_base_t base;
+    uint8_t image_buffer[5][5];
+    uint8_t previous_brightness;
+    bool    active;
+    /* Current row for strobing */
+    uint8_t strobe_row;
+    /* boolean histogram of brightness in buffer */
+    uint16_t brightnesses;
+    uint16_t pins_for_brightness[MAX_BRIGHTNESS+1];
+
+    void advanceRow();
+    inline void setPinsForRow(uint8_t brightness);
+} microbit_display_obj_t;
 
 void microbit_display_show(microbit_display_obj_t *display, microbit_image_obj_t *image) {
     mp_int_t w = min(image->width(), 5);
@@ -91,6 +112,11 @@ mp_obj_t microbit_display_show_func(mp_uint_t n_args, const mp_obj_t *pos_args, 
     bool wait = args[3].u_bool;
     bool loop = args[4].u_bool;
 
+    // Convert to string from an integer or float if applicable
+    if (mp_obj_is_integer(image) || mp_obj_is_float(image)) {
+        image = mp_obj_str_make_new(&mp_type_str, 1, 0, &image);
+    }
+
     if (MP_OBJ_IS_STR(image)) {
         // arg is a string object
         mp_uint_t len;
@@ -112,6 +138,7 @@ mp_obj_t microbit_display_show_func(mp_uint_t n_args, const mp_obj_t *pos_args, 
         }
         image = mp_obj_new_tuple(1, &image);
     }
+
     // iterable:
     if (args[4].u_bool) { /*loop*/
         image = microbit_repeat_iterator(image);
@@ -266,6 +293,65 @@ static const uint16_t render_timings[] =
 
 #define DISPLAY_TICKER_SLOT 1
 
+enum {
+    LIGHT_SENSOR_IDLE,
+    LIGHT_SENSOR_REQUEST_SAMPLE,
+    LIGHT_SENSOR_TAKING_SAMPLE,
+    LIGHT_SENSOR_HAVE_SAMPLE,
+};
+
+static MicroBitLightSensor *light_sensor_obj = NULL;
+static volatile uint8_t light_sensor_state = LIGHT_SENSOR_IDLE;
+static uint32_t light_sensor_last_reading_time = 0;
+
+static int light_sensor_read(void) {
+    // Create the light-sensor object if it doesn't yet exist
+    if (light_sensor_obj == NULL) {
+        light_sensor_obj = new MicroBitLightSensor(microbitMatrixMap);
+    }
+
+    // Depending on time since last call, take 1, 2 or 3 readings
+    int n;
+    uint32_t time = ticker_ticks_ms;
+    if (time - light_sensor_last_reading_time < 50) {
+        n = 1;
+    } else if (time - light_sensor_last_reading_time < 100) {
+        n = 2;
+    } else {
+        n = 3;
+    }
+
+    // Take readings so the object can average them out
+    for (int i = 0; i < n; ++i) {
+        light_sensor_state = LIGHT_SENSOR_REQUEST_SAMPLE;
+        while (light_sensor_state != LIGHT_SENSOR_HAVE_SAMPLE) {
+        }
+    }
+
+    // Record time of last reading
+    light_sensor_last_reading_time = ticker_ticks_ms;
+
+    // Get and return the light reading
+    return light_sensor_obj->read();
+}
+
+static bool light_sensor_busy(void) {
+    if (light_sensor_state == LIGHT_SENSOR_TAKING_SAMPLE) {
+        if (NRF_ADC->ENABLE == ADC_ENABLE_ENABLE_Enabled) {
+            return true;
+        }
+        light_sensor_state = LIGHT_SENSOR_HAVE_SAMPLE;
+    }
+    return false;
+}
+
+static void light_sensor_update(void) {
+    if (light_sensor_state == LIGHT_SENSOR_REQUEST_SAMPLE) {
+        light_sensor_obj->startSensing(MicroBitEvent(MICROBIT_ID_DISPLAY, MICROBIT_DISPLAY_EVT_LIGHT_SENSE, CREATE_ONLY));
+        light_sensor_state = LIGHT_SENSOR_TAKING_SAMPLE;
+    }
+}
+
 /* This is the PWM callback.  It is registered by the animation callback and
  * will unregister itself when all of the brightness steps are complete. */
 static int32_t callback(void) {
@@ -275,6 +361,7 @@ static int32_t callback(void) {
     brightness += 1;
     if (brightness == MAX_BRIGHTNESS) {
         clear_ticker_callback(DISPLAY_TICKER_SLOT);
+        light_sensor_update();
         return -1;
     }
     display->previous_brightness = brightness;
@@ -302,7 +389,7 @@ static void draw_object(mp_obj_t obj) {
             async_stop();
         }
     } else {
-        MP_STATE_VM(mp_pending_exception) = mp_obj_new_exception_msg(&mp_type_TypeError, "not an image.");
+        MP_STATE_VM(mp_pending_exception) = mp_obj_new_exception_msg(&mp_type_TypeError, "not an image");
         async_stop();
     }
 }
@@ -357,8 +444,14 @@ static void microbit_display_update(void) {
 /* This is the top-level animation/display callback.  It is not a registered
  * callback. */
 void microbit_display_tick(void) {
+    // We can't update the display if the light sensor is sampling
+    if (light_sensor_busy()) {
+        return;
+    }
+
     /* Do nothing if the display is not active. */
     if (!microbit_display_obj.active) {
+        light_sensor_update();
         return;
     }
 
@@ -368,6 +461,8 @@ void microbit_display_tick(void) {
     microbit_display_obj.previous_brightness = 0;
     if (microbit_display_obj.brightnesses & GREYSCALE_MASK) {
         set_ticker_callback(DISPLAY_TICKER_SLOT, callback, 1800);
+    } else {
+        light_sensor_update();
     }
 }
 
@@ -376,7 +471,7 @@ void microbit_display_animate(microbit_display_obj_t *self, mp_obj_t iterable, m
     // Reset the repeat state.
     MP_STATE_PORT(async_data)[0] = NULL;
     MP_STATE_PORT(async_data)[1] = NULL;
-    async_iterator = mp_getiter(iterable);
+    async_iterator = mp_getiter(iterable, NULL);
     async_delay = delay;
     async_clear = clear;
     MP_STATE_PORT(async_data)[0] = self; // so it doesn't get GC'd
@@ -414,7 +509,11 @@ mp_obj_t microbit_display_scroll_func(mp_uint_t n_args, const mp_obj_t *pos_args
     mp_arg_val_t args[MP_ARRAY_SIZE(scroll_allowed_args)];
     mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args, MP_ARRAY_SIZE(scroll_allowed_args), scroll_allowed_args, args);
     mp_uint_t len;
-    const char* str = mp_obj_str_get_data(args[0].u_obj, &len);
+    mp_obj_t object_string = args[0].u_obj;
+    if (mp_obj_is_integer(object_string) || mp_obj_is_float(object_string)) {
+        object_string = mp_obj_str_make_new(&mp_type_str, 1, 0, &object_string);
+    }
+    const char* str = mp_obj_str_get_data(object_string, &len);
     mp_obj_t iterable = scrolling_string_image_iterable(str, len, args[0].u_obj, args[3].u_bool /*monospace?*/, args[4].u_bool /*loop*/);
     microbit_display_animate(self, iterable, args[1].u_int /*delay*/, false/*clear*/, args[2].u_bool/*wait?*/);
     return mp_const_none;
@@ -423,6 +522,15 @@ MP_DEFINE_CONST_FUN_OBJ_KW(microbit_display_scroll_obj, 1, microbit_display_scro
 
 mp_obj_t microbit_display_on_func(mp_obj_t obj) {
     microbit_display_obj_t *self = (microbit_display_obj_t*)obj;
+    /* Try to reclaim the pins we need */
+    microbit_obj_pin_acquire(&microbit_p3_obj, microbit_pin_mode_display);
+    microbit_obj_pin_acquire(&microbit_p4_obj, microbit_pin_mode_display);
+    microbit_obj_pin_acquire(&microbit_p6_obj, microbit_pin_mode_display);
+    microbit_obj_pin_acquire(&microbit_p7_obj, microbit_pin_mode_display);
+    microbit_obj_pin_acquire(&microbit_p9_obj, microbit_pin_mode_display);
+    microbit_obj_pin_acquire(&microbit_p10_obj, microbit_pin_mode_display);
+    /* Make sure all pins are in the correct state */
+    microbit_display_init();
     /* Re-enable the display loop.  This will resume any animations in
      * progress and display any static image. */
     self->active = true;
@@ -440,6 +548,13 @@ mp_obj_t microbit_display_off_func(mp_obj_t obj) {
     /* Disable the row strobes, allowing the columns to be used freely for
      * GPIO. */
     nrf_gpio_pins_clear(ROW_PINS_MASK);
+    /* Free pins for other uses */
+    microbit_obj_pin_free(&microbit_p3_obj);
+    microbit_obj_pin_free(&microbit_p4_obj);
+    microbit_obj_pin_free(&microbit_p6_obj);
+    microbit_obj_pin_free(&microbit_p7_obj);
+    microbit_obj_pin_free(&microbit_p9_obj);
+    microbit_obj_pin_free(&microbit_p10_obj);
     return mp_const_none;
 }
 MP_DEFINE_CONST_FUN_OBJ_1(microbit_display_off_obj, microbit_display_off_func);
@@ -455,6 +570,12 @@ mp_obj_t microbit_display_is_on_func(mp_obj_t obj) {
 }
 MP_DEFINE_CONST_FUN_OBJ_1(microbit_display_is_on_obj, microbit_display_is_on_func);
 
+mp_obj_t microbit_display_read_light_level(mp_obj_t obj) {
+    (void)obj;
+    return MP_OBJ_NEW_SMALL_INT(light_sensor_read());
+}
+MP_DEFINE_CONST_FUN_OBJ_1(microbit_display_read_light_level_obj, microbit_display_read_light_level);
+
 void microbit_display_clear(void) {
     // Reset repeat state, cancel animation and clear screen.
     wakeup_event = false;
@@ -463,7 +584,8 @@ void microbit_display_clear(void) {
     wait_for_event();
 }
 
-mp_obj_t microbit_display_clear_func(void) {
+mp_obj_t microbit_display_clear_func(mp_obj_t self) {
+    (void)self;
     microbit_display_clear();
     return mp_const_none;
 }
@@ -471,10 +593,10 @@ MP_DEFINE_CONST_FUN_OBJ_1(microbit_display_clear_obj, microbit_display_clear_fun
 
 void microbit_display_set_pixel(microbit_display_obj_t *display, mp_int_t x, mp_int_t y, mp_int_t bright) {
     if (x < 0 || y < 0 || x > 4 || y > 4) {
-        nlr_raise(mp_obj_new_exception_msg(&mp_type_ValueError, "index out of bounds."));
+        mp_raise_ValueError("index out of bounds");
     }
     if (bright < 0 || bright > MAX_BRIGHTNESS) {
-        nlr_raise(mp_obj_new_exception_msg(&mp_type_ValueError, "brightness out of bounds."));
+        mp_raise_ValueError("brightness out of bounds");
     }
     display->image_buffer[x][y] = bright;
     display->brightnesses |= (1 << bright);
@@ -490,7 +612,7 @@ MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(microbit_display_set_pixel_obj, 4, 4, microb
 
 mp_int_t microbit_display_get_pixel(microbit_display_obj_t *display, mp_int_t x, mp_int_t y) {
     if (x < 0 || y < 0 || x > 4 || y > 4) {
-        nlr_raise(mp_obj_new_exception_msg(&mp_type_ValueError, "index out of bounds."));
+        mp_raise_ValueError("index out of bounds");
     }
     return display->image_buffer[x][y];
 }
@@ -511,6 +633,7 @@ STATIC const mp_map_elem_t microbit_display_locals_dict_table[] = {
     { MP_OBJ_NEW_QSTR(MP_QSTR_on),  (mp_obj_t)&microbit_display_on_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_off),  (mp_obj_t)&microbit_display_off_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_is_on),  (mp_obj_t)&microbit_display_is_on_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_read_light_level), (mp_obj_t)&microbit_display_read_light_level_obj },
 };
 
 STATIC MP_DEFINE_CONST_DICT(microbit_display_locals_dict, microbit_display_locals_dict_table);
@@ -528,8 +651,8 @@ STATIC const mp_obj_type_t microbit_display_type = {
     .getiter = NULL,
     .iternext = NULL,
     .buffer_p = {NULL},
-    .stream_p = NULL,
-    .bases_tuple = NULL,
+    .protocol = NULL,
+    .parent = NULL,
     .locals_dict = (mp_obj_dict_t*)&microbit_display_locals_dict,
 };
 
@@ -545,7 +668,7 @@ microbit_display_obj_t microbit_display_obj = {
 
 void microbit_display_init(void) {
     //  Set pins as output.
-    nrf_gpio_range_cfg_output(MIN_COLUMN_PIN, MIN_COLUMN_PIN + COLUMN_COUNT + ROW_COUNT);
+    nrf_gpio_range_cfg_output(MIN_COLUMN_PIN, MIN_COLUMN_PIN + COLUMN_COUNT + ROW_COUNT - 1);
 }
 
 }

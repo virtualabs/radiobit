@@ -43,13 +43,13 @@ module:``microbit.pin0`` - ``microbit.pin20``.
 +-----+---------+----------+
 |  5  | Digital | Button A |
 +-----+---------+----------+
-|  6  | Digital | Row 2    |
+|  6  | Digital | Column 9 |
 +-----+---------+----------+
-|  7  | Digital | Row 1    |
+|  7  | Digital | Column 8 |
 +-----+---------+----------+
 |  8  | Digital |          |
 +-----+---------+----------+
-|  9  | Digital | Row 3    |
+|  9  | Digital | Column 7 |
 +-----+---------+----------+
 |  10 | Analog  | Column 3 |
 +-----+---------+----------+
@@ -57,11 +57,11 @@ module:``microbit.pin0`` - ``microbit.pin20``.
 +-----+---------+----------+
 |  12 | Digital |          |
 +-----+---------+----------+
-|  13 | Digital | SPI MOSI |
+|  13 | Digital | SPI SCK  |
 +-----+---------+----------+
 |  14 | Digital | SPI MISO |
 +-----+---------+----------+
-|  15 | Digital | SPI SCK  |
+|  15 | Digital | SPI MOSI |
 +-----+---------+----------+
 |  16 | Digital |          |
 +-----+---------+----------+
@@ -116,9 +116,9 @@ Classes
 =======
 
 There are three kinds of pins, differing in what is available for them. They
-are represented by the below classes. Note that they form a hierarchy, so that
-each class has all the functionality of the previous class, and adds its own
-to that.
+are represented by the classes listed below. Note that they form a hierarchy,
+so that each class has all the functionality of the previous class, and adds
+its own to that.
 
 .. note::
     Those classes are not actually available for the user, you can't create
@@ -135,12 +135,37 @@ to that.
 
         Set the pin to high if ``value`` is 1, or to low, if it is 0.
 
+    .. py:method::set_pull(value)
+
+        Set the pull state to one of three possible values: ``pin.PULL_UP``,
+        ``pin.PULL_DOWN`` or ``pin.NO_PULL`` (where ``pin`` is an instance of
+        a pin). See below for discussion of default pull states.
+
+
+    .. py:method::get_pull()
+
+        Returns the pull configuration on a pin, which can be one of three 
+        possible values: ``NO_PULL``, ``PULL_DOWN``, or ``PULL_UP``. These 
+        are set using the ``set_pull()`` method or automatically configured 
+        when a pin mode requires it.
+
+    .. py:method::get_mode()
+
+        Returns the pin mode. When a pin is used for a specific function, like 
+        writing a digital value, or reading an analog value, the pin mode 
+        changes. Pins can have one of the following modes: ``MODE_UNUSED``, 
+        ``MODE_WRITE_ANALOG``, ``MODE_READ_DIGITAL``, ``MODE_WRITE_DIGITAL``, 
+        ``MODE_DISPLAY``, ``MODE_BUTTON``, ``MODE_MUSIC``, ``MODE_AUDIO_PLAY``,
+        ``MODE_TOUCH``, ``MODE_I2C``, ``MODE_SPI``.
+
+
 .. py:class:: MicroBitAnalogDigitalPin
 
     .. py:method:: read_analog()
 
         Read the voltage applied to the pin, and return it as an integer
         between 0 (meaning 0V) and 1023 (meaning 3.3V).
+
 
     .. py:method:: write_analog(value)
 
@@ -156,7 +181,15 @@ to that.
     .. py:method:: set_analog_period_microseconds(period)
 
         Set the period of the PWM signal being output to ``period`` in
-        microseconds. The minimum valid value is 35µs.
+        microseconds. The minimum valid value is 256µs.
+
+
+.. py:class:: MicroBitAnalogDigitalPin
+
+    .. py:method:: read_analog()
+
+        Read the voltage applied to the pin, and return it as an integer
+        between 0 (meaning 0V) and 1023 (meaning 3.3V).
 
 
 .. py:class:: MicroBitTouchPin
@@ -166,7 +199,29 @@ to that.
         Return ``True`` if the pin is being touched with a finger, otherwise
         return ``False``.
 
-        This test is done by measuring the capacitance of the pin together with
-        whatever is connected to it. Human body has quite a large capacitance,
-        so touching the pin gives a dramatic change in reading, which can be
-        detected.
+        This test is done by measuring how much resistance there is between the
+        pin and ground.  A low resistance gives a reading of ``True``.  To get
+        a reliable reading using a finger you may need to touch the ground pin
+        with another part of your body, for example your other hand.
+
+The pull mode for a pin is automatically configured when the pin changes to an
+input mode. Input modes are when you call ``read_analog`` / ``read_digital`` /
+``is_touched``. The default pull mode for these is, respectively, ``NO_PULL``,
+``PULL_DOWN``, ``PULL_UP``. Calling ``set_pull`` will configure the pin to be
+in ``read_digital`` mode with the given pull mode.
+
+
+.. note::
+    The micro:bit has external weak (10M) pull-ups fitted on pins
+    0, 1 and 2 only, in order for the touch sensing to work.
+
+    There are also external (10k) pull-ups fitted on pins 5 and 11, in order
+    for buttons A and B to work.
+
+    GPIO pins are also used for the display. 6 of these are routed to the
+    edge connector at 3, 4, 6, 7, 9. and 10. If you want to use these pins
+    for another purpose, you may need to turn the `display off
+    <https://microbit-micropython.readthedocs.io/en/latest/display.html#microbit.display.off>`_.
+
+    See the `edge connector data sheet
+    <http://tech.microbit.org/hardware/edgeconnector_ds>`_.
