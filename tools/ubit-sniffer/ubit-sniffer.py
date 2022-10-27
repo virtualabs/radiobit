@@ -127,10 +127,10 @@ class ESBSniffer(object):
         """
         self._send(b't')
         self._ack(b't')
-        channel = ord(self.read(1))
-        if channel != 101:
-            self.channel = channel
-            return channel
+        channel = self.read(1)
+        if channel[0] != 101:
+            self.channel = channel[0]
+            return channel[0]
         else:
             return None
 
@@ -252,10 +252,10 @@ if __name__ == '__main__':
                         addr[2],
                         addr[3],
                         addr[4],
-                        hexlify(data)
+                        hexlify(data).decode('latin-1')
                     ))
                 else:
-                    channel = ord(pkt[0])
+                    channel = pkt[0]
                     print('\033[92m%03d\033[0m \033[95m%02x%02x%02x%02x%02x >\033[0m\033[0m %s' % (
                         channel,
                         sniffer.addr[0],
@@ -263,7 +263,7 @@ if __name__ == '__main__':
                         sniffer.addr[2],
                         sniffer.addr[3],
                         sniffer.addr[4],
-                        hexlify(pkt[1:])
+                        hexlify(pkt[1:]).decode('latin-1')
                     ))
     except ChannelError as error:
         print('\033[91mWrong channel: %d\033[0m' % args.channel)
