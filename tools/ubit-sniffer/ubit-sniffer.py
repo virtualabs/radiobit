@@ -8,6 +8,7 @@ import serial
 import argparse
 from time import sleep, time
 from struct import pack
+from binascii import unhexlify, hexlify
 
 class TargetError(Exception):
     """
@@ -42,13 +43,13 @@ class ESBSniffer(object):
         self.mode = 0 # 0 - sniff, 1 - follow
         self.channel = 0
         self.rate = 1
-        self.addr = '0000000000'.decode('hex')
+        self.addr = unhexlify('0000000000')
 
     def _send(self, buf):
         """
         Send buffer to middleware.
         """
-        enc_buf = '%02x'%len(buf) + buf.encode('hex')
+        enc_buf = b'%02x'%len(buf) + hexlify(buf)
         #print enc_buf
         self.dev.write(enc_buf)
 
@@ -56,7 +57,7 @@ class ESBSniffer(object):
         """
         Read size bytes from uart.
         """
-        out = ''
+        out = b''
         while len(out) < size:
             out += self.dev.read(size - len(out))
             #print out
@@ -70,7 +71,7 @@ class ESBSniffer(object):
         Acknowledge op.
         """
         #self.dev.flush()
-        ack = ''
+        ack = b''
         while (ack != op):
             ack = self.read(1)
         #print 'ack %s (%s)' % (ack,op)
@@ -80,24 +81,25 @@ class ESBSniffer(object):
 
     def reset(self, raw=0, rate=1):
         self.flush()
-        self._send('r'+chr(rate)+chr(raw))
-        self._ack('r')
+        self._send(b'r'+bytes([rate, raw]))
+        self._ack(b'r')
         self.mode = 0
 
     def set_rate(self, rate):
         """
         Set rate
         """
-        self._send('b'+chr(rate))
-        self._ack('b')
+        self._send(b'b'+bytes([rate]))
+        self._ack(b'b')
         self.rate = rate
 
     def set_channel(self, channel):
         """
         Set channel
         """
-        self._send('c'+chr(channel))
-        self._ack('c')
+        self._send(b'c'+bytes([channel]))
+        self._ack(b'c')
+        print('channel set')
         self.channel = channel
 
     def set_address(self, address):
@@ -106,8 +108,8 @@ class ESBSniffer(object):
         """
         addr = pack('>I', (address >> 8))
         group = pack('>B', address&0x00000000FF)
-        self._send('f'+addr+group)
-        self._ack('f')
+        self._send(b'f'+addr+group)
+        self._ack(b'f')
         self.mode = 1
         self.addr = addr+group
 
@@ -115,16 +117,16 @@ class ESBSniffer(object):
         """
         Set channel lock
         """
-        self._send('m\x02')
-        self._ack('m')
+        self._send(b'm\x02')
+        self._ack(b'm')
 
     def ping(self):
         """
         If address has been set, tune the sniffer to the correct
         channel the device has been found on.
         """
-        self._send('t')
-        self._ack('t')
+        self._send(b't')
+        self._ack(b't')
         channel = ord(self.read(1))
         if channel != 101:
             self.channel = channel
@@ -136,10 +138,16 @@ class ESBSniffer(object):
         """
         Receive packets
         """
-        self._send('p')
+        self._send(b'p')
         pkt = self.read(1)
-        if pkt=='p':
+        if pkt==b'p':
             size = self.read(1)
+            if size[0] > 0:
+                data = self.read(size[0])
+                return data
+            else:
+                return None
+            """
             if size != '':
                 size = ord(size)
                 if size>0:
@@ -149,6 +157,7 @@ class ESBSniffer(object):
                     return None
             else:
                 return None
+            """
         else:
             return None
 
@@ -156,8 +165,8 @@ class ESBSniffer(object):
         """
         Send data
         """
-        self._send('s'+chr(len(data))+data)
-        return (self.read(1) == 's')
+        self._send(b's'+bytes([len(data)])+data)
+        return (self.read(1) == b's')
 
 if __name__ == '__main__':
 
@@ -203,13 +212,13 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
     try:
-        print '\033[1muBit sniffer uses device %s\033[0m' % args.device
-        print '\033[1minitializing device ...\033[0m'
+        print('\033[1muBit sniffer uses device %s\033[0m' % args.device)
+        print('\033[1minitializing device ...\033[0m')
         sniffer  = ESBSniffer(args.device)
         sniffer.reset(raw=args.raw,rate=args.rate)
         channel = 1
         rates = ['1Mbit', '2Mbit','250Kbit','BLE LL']
-        print '\033[1mSelecting rate: %s\033[0m' % rates[args.rate]
+        print('\033[1mSelecting rate: %s\033[0m' % rates[args.rate])
 
         if args.channel is not None:
             if args.channel >= 0 and args.channel <= 100:
@@ -222,40 +231,40 @@ if __name__ == '__main__':
             target = int(args.target, 16)
             if target<0xffffffffff:
                 sniffer.set_address(target)
-                print '\033[1mStarting following target \033[92m%s\033[0m\033[1m ...\033[0m\033[0m' % hex(target)
+                print('\033[1mStarting following target \033[92m%s\033[0m\033[1m ...\033[0m\033[0m' % hex(target))
             else:
                 raise TargetError()
         else:
-            print '\033[1mStarting sniffing ...\033[0m'
+            print('\033[1mStarting sniffing ...\033[0m')
 
-        print ''
+        print('')
         while True:
             pkt = sniffer.receive()
             if pkt is not None:
                 if sniffer.mode == 0:
-                    channel = ord(pkt[0])
+                    channel = pkt[0]
                     addr = pkt[1:6]
                     data = pkt[6:]
-                    print '\033[92m%03d\033[0m \033[95m%02x%02x%02x%02x%02x >\033[0m\033[0m %s' % (
+                    print('\033[92m%03d\033[0m \033[95m%02x%02x%02x%02x%02x >\033[0m\033[0m %s' % (
                         channel,
-                        ord(addr[0]),
-                        ord(addr[1]),
-                        ord(addr[2]),
-                        ord(addr[3]),
-                        ord(addr[4]),
-                        data.encode('hex')
-                    )
+                        addr[0],
+                        addr[1],
+                        addr[2],
+                        addr[3],
+                        addr[4],
+                        hexlify(data)
+                    ))
                 else:
                     channel = ord(pkt[0])
-                    print '\033[92m%03d\033[0m \033[95m%02x%02x%02x%02x%02x >\033[0m\033[0m %s' % (
+                    print('\033[92m%03d\033[0m \033[95m%02x%02x%02x%02x%02x >\033[0m\033[0m %s' % (
                         channel,
-                        ord(sniffer.addr[0]),
-                        ord(sniffer.addr[1]),
-                        ord(sniffer.addr[2]),
-                        ord(sniffer.addr[3]),
-                        ord(sniffer.addr[4]),
-                        pkt[1:].encode('hex')
-                    )
+                        sniffer.addr[0],
+                        sniffer.addr[1],
+                        sniffer.addr[2],
+                        sniffer.addr[3],
+                        sniffer.addr[4],
+                        hexlify(pkt[1:])
+                    ))
     except ChannelError as error:
         print('\033[91mWrong channel: %d\033[0m' % args.channel)
     except TargetError as error:
@@ -265,5 +274,5 @@ if __name__ == '__main__':
         sniffer.close()
     except serial.serialutil.SerialException as error:
         print('\033[91mDevice not found (%s)\033[0m' % args.device)
-    except Exception, error:
-        print error
+    except Exception as error:
+        print(error)
